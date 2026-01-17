@@ -1,19 +1,16 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.9"
-# dependencies = ["requests"]
-# ///
 """
 Zotero Collection Selector
 
-List and select Zotero libraries/collections via the export-org extension API.
-Use this to set the target collection before running zotero_saver.py.
+List, select, and create Zotero collections via the export-org extension API.
+Use this to set the target collection before running zotero-save.
 
 Usage:
-    uv run zotero_collection.py              # Interactive selection
-    uv run zotero_collection.py --current    # Show current selection
-    uv run zotero_collection.py --list       # List all collections
-    uv run zotero_collection.py --select KEY # Select collection by key
+    zotero-collection                        # Interactive selection
+    zotero-collection --current              # Show current selection
+    zotero-collection --list                 # List all collections
+    zotero-collection --select KEY           # Select collection by key
+    zotero-collection --create NAME          # Create new collection
+    zotero-collection --create NAME --parent KEY  # Create subcollection
 """
 
 import argparse
@@ -66,6 +63,34 @@ def select_collection(port: int, library_id: int, collection_key: str | None) ->
         r = requests.post(
             get_api_url(port, "/collection/select"),
             json={"libraryID": library_id, "collectionKey": collection_key},
+            timeout=5
+        )
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to Zotero on port {port}", file=sys.stderr)
+        return None
+    except requests.exceptions.HTTPError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return None
+
+
+def create_collection(port: int, library_id: int, name: str, parent_key: str | None = None) -> dict | None:
+    """Create a new collection in Zotero.
+
+    Args:
+        port: Zotero connector port
+        library_id: Library ID to create collection in
+        name: Name of the new collection
+        parent_key: Optional parent collection key for creating subcollections
+    """
+    try:
+        payload = {"libraryID": library_id, "name": name}
+        if parent_key:
+            payload["parentKey"] = parent_key
+        r = requests.post(
+            get_api_url(port, "/collection/create"),
+            json=payload,
             timeout=5
         )
         r.raise_for_status()
@@ -244,6 +269,8 @@ Examples:
   %(prog)s --list --tree            # List as tree
   %(prog)s --library 1 --select KEY # Select specific collection
   %(prog)s --library 1              # Select library root
+  %(prog)s --library 1 --create "New Collection"  # Create collection
+  %(prog)s --library 1 --create "Sub" --parent KEY  # Create subcollection
         """
     )
 
@@ -278,6 +305,16 @@ Examples:
         "--select", "-s",
         metavar="KEY",
         help="Collection key to select (use with --library)"
+    )
+    parser.add_argument(
+        "--create",
+        metavar="NAME",
+        help="Create a new collection with this name (use with --library)"
+    )
+    parser.add_argument(
+        "--parent",
+        metavar="KEY",
+        help="Parent collection key for creating subcollections (use with --create)"
     )
     parser.add_argument(
         "--json",
@@ -322,6 +359,25 @@ Examples:
                         print_tree(lib["collections"], prefix="  ")  # ignore return
                     print()
         return 0 if data else 1
+
+    # Create collection
+    if args.create:
+        if args.library is None:
+            print("Error: --library is required when using --create", file=sys.stderr)
+            return 1
+        result = create_collection(args.port, args.library, args.create, args.parent)
+        if result:
+            if args.json:
+                print(json.dumps(result, indent=2))
+            elif result.get("success"):
+                coll = result.get("collection", {})
+                print(f"Created: {coll.get('name')} (Key: {coll.get('key')})")
+                if args.parent:
+                    print(f"Parent: {args.parent}")
+            else:
+                print(f"Error: {result.get('error', 'Unknown error')}")
+                return 1
+        return 0 if result and result.get("success") else 1
 
     # Programmatic selection
     if args.library is not None:

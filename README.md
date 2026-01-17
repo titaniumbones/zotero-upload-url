@@ -15,28 +15,29 @@ A simple macOS tool to save URLs to Zotero using your existing Firefox browser w
 - **macOS** (uses AppleScript)
 - **Firefox** with [Zotero Connector](https://www.zotero.org/download/connectors) extension installed
 - **Zotero** desktop app running
-- **Python 3**
 
 ## Installation
 
-No installation needed with `uv` - dependencies are handled automatically:
+Install globally with `uv`:
 
 ```bash
-uv run zotero_saver.py "https://example.com"
+uv tool install git+https://github.com/titaniumbones/zotero-upload-url
 ```
 
-Or install manually:
+Or from a local checkout:
 
 ```bash
-pip install requests
+uv tool install .
 ```
+
+This installs two commands: `zotero-save` and `zotero-collection`.
 
 ## Usage
 
 ### Interactive Mode (recommended for sites requiring login)
 
 ```bash
-uv run zotero_saver.py "https://example-library.edu/article"
+zotero-save "https://example-library.edu/article"
 ```
 
 The script will:
@@ -47,7 +48,7 @@ The script will:
 ### Auto Mode (for public sites)
 
 ```bash
-uv run zotero_saver.py --auto 10 "https://arxiv.org/abs/2301.07041"
+zotero-save --auto 10 "https://arxiv.org/abs/2301.07041"
 ```
 
 Waits 10 seconds for the page to load, then saves automatically.
@@ -55,12 +56,36 @@ Waits 10 seconds for the page to load, then saves automatically.
 ### Save Current Tab
 
 ```bash
-uv run zotero_saver.py --no-open placeholder
+zotero-save --no-open placeholder
 ```
 
 Just triggers the Zotero save on whatever tab is currently open in Firefox.
 
+### Collection Selector
+
+Select which Zotero collection to save items to:
+
+```bash
+zotero-collection              # Interactive selection (uses fzf if available)
+zotero-collection --current    # Show current selection
+zotero-collection --list       # List all collections (JSON)
+```
+
+### Create Collection
+
+Create new collections in Zotero:
+
+```bash
+# Create a top-level collection in library 1
+zotero-collection --library 1 --create "New Collection"
+
+# Create a subcollection under an existing collection
+zotero-collection --library 1 --create "Subcollection" --parent ABCD1234
+```
+
 ## Options
+
+### zotero-save
 
 ```
 positional arguments:
@@ -72,6 +97,23 @@ options:
                         Auto-save after N seconds instead of waiting for Enter
   --no-open, -n         Don't open URL (assume it's already open in Firefox)
   --skip-check          Skip checking if Zotero is running
+```
+
+### zotero-collection
+
+```
+options:
+  -h, --help            show this help message and exit
+  --port PORT, -p PORT  Zotero port (default: 23119)
+  --current, -c         Show currently selected collection
+  --list, -l            List all libraries and collections
+  --tree, -t            Display list as tree (with --list)
+  --library ID          Library ID for selection or creation
+  --select KEY, -s KEY  Collection key to select (use with --library)
+  --create NAME         Create a new collection (use with --library)
+  --parent KEY          Parent collection for subcollection (use with --create)
+  --json                Output in JSON format
+  --no-fzf              Use numbered list instead of fuzzy finder
 ```
 
 ## Troubleshooting

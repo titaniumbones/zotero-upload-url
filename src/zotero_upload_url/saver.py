@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.9"
-# dependencies = ["requests"]
-# ///
 """
 Zotero URL Saver - macOS AppleScript Edition
 
@@ -10,9 +5,9 @@ Opens URLs in your existing Firefox and saves to Zotero.
 Supports waiting for manual authentication (Duo push, etc).
 
 Usage:
-    uv run zotero_saver.py <url>                    # Interactive mode
-    uv run zotero_saver.py --auto 10 <url>          # Auto-save after 10 seconds
-    uv run zotero_saver.py --no-open <placeholder>  # Save current tab
+    zotero-save <url>                    # Interactive mode
+    zotero-save --auto 10 <url>          # Auto-save after 10 seconds
+    zotero-save --no-open <placeholder>  # Save current tab
 """
 
 import argparse
@@ -59,24 +54,22 @@ def run_applescript(script: str) -> str:
 
 def open_url_in_firefox(url: str):
     """Open URL in Firefox (new tab if already running)."""
-    # Escape single quotes in URL for AppleScript
-    escaped_url = url.replace("'", "'\\''")
+    # Use subprocess to open URL in Firefox
+    result = subprocess.run(
+        ["open", "-a", "Firefox", url],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Error opening URL: {result.stderr}")
 
-    script = f'''
-    on firefoxRunning()
-        tell application "System Events" to (name of processes) contains "firefox"
-    end firefoxRunning
+    # Give Firefox time to open the tab, then activate it
+    import time
+    time.sleep(0.5)
 
-    if (firefoxRunning() = false) then
-        do shell script "open -a Firefox '{escaped_url}'"
-    else
-        tell application "Firefox"
-            activate
-            open location "{url}"
-        end tell
-    end if
-    '''
-    run_applescript(script)
+    # Activate Firefox
+    activate_script = 'tell application "Firefox" to activate'
+    run_applescript(activate_script)
 
 
 def trigger_zotero_save(shortcut: str = "cmd+shift+z"):
