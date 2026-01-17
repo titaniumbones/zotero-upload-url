@@ -1,5 +1,11 @@
 # Zotero URL Saver
 
+> **DEPRECATED**: This repository has been merged into [mwp-zotero-tools](https://github.com/titaniumbones/mwp-zotero-tools).
+> Please use the monorepo at `packages/zotero-upload-url/` for the latest version.
+> This repository is archived and will no longer receive updates.
+
+---
+
 A simple macOS tool to save URLs to Zotero using your existing Firefox browser with the Zotero Connector extension.
 
 ## How It Works
