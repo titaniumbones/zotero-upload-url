@@ -1,7 +1,10 @@
 """
 Zotero Collection Selector
 
-List, select, and create Zotero collections via the export-org extension API.
+List, select, and create Zotero collections.
+- Listing uses Zotero's native API (no plugin required)
+- Selection and creation use the export-org plugin API (requires plugin)
+
 Use this to set the target collection before running zotero-save.
 
 Usage:
@@ -18,23 +21,138 @@ import json
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 import requests
 
 DEFAULT_ZOTERO_PORT = 23119
-BASE_PATH = "/export-org"
+
+# Plugin API base path (for selection/creation)
+PLUGIN_BASE_PATH = "/export-org"
+
+# Native API base path (for listing)
+NATIVE_BASE_PATH = "/api"
 
 
-def get_api_url(port: int, endpoint: str) -> str:
-    return f"http://127.0.0.1:{port}{BASE_PATH}{endpoint}"
+def get_plugin_url(port: int, endpoint: str) -> str:
+    """Get URL for plugin API endpoints (selection, creation)."""
+    return f"http://127.0.0.1:{port}{PLUGIN_BASE_PATH}{endpoint}"
+
+
+def get_native_url(port: int, endpoint: str) -> str:
+    """Get URL for native Zotero API endpoints (listing)."""
+    return f"http://127.0.0.1:{port}{NATIVE_BASE_PATH}{endpoint}"
 
 
 def get_current_collection(port: int) -> dict | None:
-    """Get the currently selected library/collection."""
+    """Get the currently selected library/collection.
+
+    Uses plugin API (requires zotero-export-notes plugin).
+    """
     try:
-        r = requests.get(get_api_url(port, "/collection/current"), timeout=5)
+        r = requests.get(get_plugin_url(port, "/collection/current"), timeout=5)
         r.raise_for_status()
         return r.json()
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to Zotero on port {port}", file=sys.stderr)
+        return None
+    except requests.exceptions.HTTPError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return None
+
+
+def _build_collection_tree(collections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build hierarchical tree from flat collection list.
+
+    Takes flat list from native API and builds nested tree structure.
+    """
+    # Create lookup by key
+    by_key: dict[str, dict[str, Any]] = {}
+    for c in collections:
+        data = c.get("data", {})
+        key = c.get("key", "")
+        by_key[key] = {
+            "key": key,
+            "name": data.get("name", "Unknown"),
+            "parentKey": data.get("parentCollection") or None,
+            "children": []
+        }
+
+    # Build tree
+    roots: list[dict[str, Any]] = []
+    for key, node in by_key.items():
+        parent_key = node["parentKey"]
+        if parent_key and parent_key in by_key:
+            by_key[parent_key]["children"].append(node)
+        else:
+            roots.append(node)
+
+    # Sort children alphabetically
+    def sort_children(nodes: list[dict[str, Any]]) -> None:
+        nodes.sort(key=lambda x: x["name"].lower())
+        for node in nodes:
+            if node["children"]:
+                sort_children(node["children"])
+
+    sort_children(roots)
+    return roots
+
+
+def list_collections_native(port: int) -> dict | None:
+    """Get hierarchical list of all libraries and collections using native API.
+
+    Uses Zotero's native API (no plugin required).
+    """
+    try:
+        libraries: list[dict[str, Any]] = []
+
+        # Get personal library collections
+        personal_collections_resp = requests.get(
+            get_native_url(port, "/users/0/collections"),
+            timeout=10
+        )
+        personal_collections_resp.raise_for_status()
+        personal_collections = personal_collections_resp.json()
+
+        libraries.append({
+            "id": 1,  # Personal library is always ID 1
+            "name": "My Library",
+            "type": "user",
+            "collections": _build_collection_tree(personal_collections)
+        })
+
+        # Get group libraries
+        groups_resp = requests.get(
+            get_native_url(port, "/users/0/groups"),
+            timeout=10
+        )
+        groups_resp.raise_for_status()
+        groups = groups_resp.json()
+
+        # Get collections for each group
+        for group in groups:
+            group_id = group.get("id")
+            group_name = group.get("data", {}).get("name") or group.get("name", f"Group {group_id}")
+
+            try:
+                group_collections_resp = requests.get(
+                    get_native_url(port, f"/groups/{group_id}/collections"),
+                    timeout=10
+                )
+                group_collections_resp.raise_for_status()
+                group_collections = group_collections_resp.json()
+            except requests.exceptions.RequestException:
+                group_collections = []
+
+            libraries.append({
+                "id": group_id,
+                "name": group_name,
+                "type": "group",
+                "collections": _build_collection_tree(group_collections)
+            })
+
+        return {"libraries": libraries}
+
     except requests.exceptions.ConnectionError:
         print(f"Error: Cannot connect to Zotero on port {port}", file=sys.stderr)
         return None
@@ -44,24 +162,21 @@ def get_current_collection(port: int) -> dict | None:
 
 
 def list_collections(port: int) -> dict | None:
-    """Get hierarchical list of all libraries and collections."""
-    try:
-        r = requests.get(get_api_url(port, "/collections/list"), timeout=5)
-        r.raise_for_status()
-        return r.json()
-    except requests.exceptions.ConnectionError:
-        print(f"Error: Cannot connect to Zotero on port {port}", file=sys.stderr)
-        return None
-    except requests.exceptions.HTTPError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return None
+    """Get hierarchical list of all libraries and collections.
+
+    Uses native Zotero API (no plugin required).
+    """
+    return list_collections_native(port)
 
 
 def select_collection(port: int, library_id: int, collection_key: str | None) -> dict | None:
-    """Select a library or collection in Zotero's UI."""
+    """Select a library or collection in Zotero's UI.
+
+    Uses plugin API (requires zotero-export-notes plugin).
+    """
     try:
         r = requests.post(
-            get_api_url(port, "/collection/select"),
+            get_plugin_url(port, "/collection/select"),
             json={"libraryID": library_id, "collectionKey": collection_key},
             timeout=5
         )
@@ -78,6 +193,8 @@ def select_collection(port: int, library_id: int, collection_key: str | None) ->
 def create_collection(port: int, library_id: int, name: str, parent_key: str | None = None) -> dict | None:
     """Create a new collection in Zotero.
 
+    Uses plugin API (requires zotero-export-notes plugin).
+
     Args:
         port: Zotero connector port
         library_id: Library ID to create collection in
@@ -89,7 +206,7 @@ def create_collection(port: int, library_id: int, name: str, parent_key: str | N
         if parent_key:
             payload["parentKey"] = parent_key
         r = requests.post(
-            get_api_url(port, "/collection/create"),
+            get_plugin_url(port, "/collection/create"),
             json=payload,
             timeout=5
         )
